@@ -1,62 +1,19 @@
 pragma solidity ^0.4.24;
 
 import "../common/model_type.sol";
-
-
-/// @title The interface of system config
-/// @author ["Cryptape Technologies <contact@cryptape.com>"]
-interface SysConfigInterface {
-    /// @notice Update current chain name
-    function setChainName(string) external;
-
-    /// @notice Update current operator
-    function setOperator(string) external;
-
-    /// @notice Update current operator's website URL
-    function setWebsite(string) external;
-
-    /// @notice Get delay block number before validate
-    function getDelayBlockNumber() external view returns (uint);
-
-    /// @notice Whether check permission in the system or not, true represents check and false represents don't check.
-    function getPermissionCheck() external view returns (bool);
-
-    /// @notice Whether check quota in the system or not, true represents check and false represents don't check.
-    function getQuotaCheck() external view returns (bool);
-
-    /// @notice Whether check transaction fee back to operation platform or not, true represents back to platform and false represents back to nodes
-    function getFeeBackPlatformCheck() external view returns (bool);
-
-    /// @notice The owner of the chain
-    function getChainOwner() external view returns (address);
-
-    /// @notice The name of current chain
-    function getChainName() external view returns (string);
-
-    /// @notice The id of current chain
-    function getChainId() external view returns (uint32);
-
-    /// @notice The operator of current chain
-    function getOperator() external view returns (string);
-
-    /// @notice Current operator's website URL
-    function getWebsite() external view returns (string);
-
-    /// @notice The interval time for creating a block (milliseconds)
-    function getBlockInterval() external view returns (uint64);
-
-    /// @notice The token information
-    function getTokenInfo() external view returns (string, string, string);
-}
-
+import "../common/admin.sol";
+import "../common/address.sol";
+import "../interfaces/sys_config.sol";
 
 /// @title System config contract
 /// @author ["Cryptape Technologies <contact@cryptape.com>"]
-contract SysConfig is SysConfigInterface, EconomicalType{
+contract SysConfig is ISysConfig, EconomicalType, ReservedAddress {
 
     /// @notice only chain_name, operator, website can be updated
     uint delayBlockNumber;
     bool checkPermission;
+    bool checkSendTxPermission;
+    bool checkCreateContractPermission;
     bool checkQuota;
     bool checkFeeBackPlatform;
     address chainOwner;
@@ -68,6 +25,15 @@ contract SysConfig is SysConfigInterface, EconomicalType{
     EconomicalModel economicalModel;
     TokenInfo tokenInfo;
 
+    Admin admin = Admin(adminAddr);
+    uint chainIdV1;
+
+    modifier onlyAdmin {
+        if (admin.isAdmin(msg.sender))
+            _;
+        else return;
+    }
+
     struct TokenInfo {
         string name;
         string symbol;
@@ -78,6 +44,8 @@ contract SysConfig is SysConfigInterface, EconomicalType{
     constructor(
         uint _delayBlockNumber,
         bool _checkPermission,
+        bool _checkSendTxPermission,
+        bool _checkCreateContractPermission,
         bool _checkQuota,
         bool _checkFeeBackPlatform,
         address _chainOwner,
@@ -93,9 +61,11 @@ contract SysConfig is SysConfigInterface, EconomicalType{
     )
         public
     {
-        require(_chainId > 0);
+        require(_chainId > 0, "The chainId should larger than zero.");
         delayBlockNumber = _delayBlockNumber;
         checkPermission = _checkPermission;
+        checkSendTxPermission = _checkSendTxPermission;
+        checkCreateContractPermission = _checkCreateContractPermission;
         checkQuota = _checkQuota;
         checkFeeBackPlatform = _checkFeeBackPlatform;
         chainOwner = _chainOwner;
@@ -114,18 +84,21 @@ contract SysConfig is SysConfigInterface, EconomicalType{
 
     function setOperator(string _operator)
         external
+        onlyAdmin
     {
         operator = _operator;
     }
 
     function setWebsite(string _website)
         external
+        onlyAdmin
     {
         website = _website;
     }
 
     function setChainName(string _chainName)
         external
+        onlyAdmin
     {
         chainName = _chainName;
     }
@@ -144,6 +117,22 @@ contract SysConfig is SysConfigInterface, EconomicalType{
         returns (bool)
     {
         return checkPermission;
+    }
+
+    function getSendTxPermissionCheck()
+        public
+        view
+        returns (bool)
+    {
+        return checkSendTxPermission;
+    }
+
+    function getCreateContractPermissionCheck()
+        public
+        view
+        returns (bool)
+    {
+        return checkCreateContractPermission;
     }
 
     function getQuotaCheck()
@@ -184,6 +173,14 @@ contract SysConfig is SysConfigInterface, EconomicalType{
         returns (uint32)
     {
         return chainId;
+    }
+
+    function getChainIdV1()
+        public
+        view
+        returns (uint)
+    {
+        return chainIdV1;
     }
 
     function getOperator()

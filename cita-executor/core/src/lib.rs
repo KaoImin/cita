@@ -17,6 +17,8 @@
 
 #![feature(try_from)]
 #![cfg_attr(test, feature(test))]
+#![feature(tool_lints)]
+
 extern crate bincode;
 extern crate byteorder;
 #[macro_use]
@@ -92,11 +94,9 @@ pub mod pod_account;
 #[macro_use]
 pub mod engines;
 pub mod error;
-pub mod native;
 pub mod substate;
 
 pub mod contracts;
-pub mod grpc_contracts;
 pub mod libexecutor;
 pub mod snapshot;
 

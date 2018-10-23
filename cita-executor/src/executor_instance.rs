@@ -1,12 +1,31 @@
-use cita_types::{Address, H256};
-use core::contracts::sys_config::SysConfig;
+// CITA
+// Copyright 2016-2018 Cryptape Technologies LLC.
+
+// This program is free software: you can redistribute it
+// and/or modify it under the terms of the GNU General Public
+// License as published by the Free Software Foundation,
+// either version 3 of the License, or (at your option) any
+// later version.
+
+// This program is distributed in the hope that it will be
+// useful, but WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+// PURPOSE. See the GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use cita_types::traits::LowerHex;
+use cita_types::{Address, H256, U256};
+use core::contracts::solc::sys_config::SysConfig;
+use core::contracts::solc::VersionManager;
 use core::db;
 use core::libexecutor::block::{Block, ClosedBlock};
 use core::libexecutor::call_request::CallRequest;
 use core::libexecutor::executor::{BlockInQueue, Config, Executor, Stage};
 use core::libexecutor::Genesis;
 use error::ErrorCode;
-use jsonrpc_types::rpctypes::{BlockNumber, BlockTag, CountOrCode, MetaData};
+use jsonrpc_types::rpctypes::{BlockNumber, BlockTag, CountOrCode, EconomicalModel, MetaData};
 use libproto::auth::Miscellaneous;
 use libproto::blockchain::{BlockWithProof, Proof, ProofType, RichStatus, StateSignal};
 use libproto::consensus::SignedProposal;
@@ -63,7 +82,7 @@ impl ExecutorInstance {
         let grpc_port = executor_config.grpc_port;
         let executor = Executor::init_executor(Arc::new(db), genesis, &executor_config);
         let executor = Arc::new(executor);
-        executor.set_gas_and_nodes(executor.get_max_height());
+        // send init executed info only have ConsensusConfig
         executor.send_executed_info_to_chain(executor.get_max_height(), &ctx_pub);
         ExecutorInstance {
             ctx_pub,
@@ -181,12 +200,16 @@ impl ExecutorInstance {
                                 {
                                     *self.ext.stage.write() = Stage::ExecutingBlock;
                                 }
-                                match self.closed_block.replace(None) {
-                                    Some(ref closed_block)
-                                        if closed_block.is_equivalent(&block) =>
-                                    {
+                                match self.closed_block.replace(None).and_then(|closed_block| {
+                                    if closed_block.is_equivalent(&block) {
+                                        Some(closed_block)
+                                    } else {
+                                        None
+                                    }
+                                }) {
+                                    Some(closed_block) => {
                                         self.ext.finalize_proposal(
-                                            closed_block.clone(),
+                                            closed_block,
                                             &block,
                                             &self.ctx_pub,
                                         );
@@ -297,15 +320,22 @@ impl ExecutorInstance {
     }
 
     fn get_auth_miscellaneous(&self) {
+        let version_manager = VersionManager::new(&self.ext);
+
         let sys_config = SysConfig::new(&self.ext);
         let mut miscellaneous = Miscellaneous::new();
-        miscellaneous.set_chain_id(sys_config.chain_id());
-        trace!(
-            "the chain id captured in executor is {}",
-            sys_config.chain_id()
-        );
-        let msg: Message = miscellaneous.into();
 
+        if let Some(chain_id) = sys_config.deal_chain_id_version(&version_manager) {
+            miscellaneous.set_chain_id(chain_id.id_v0);
+            miscellaneous.set_chain_id_v1(<[u8; 32]>::from(chain_id.id_v1).to_vec());
+            trace!(
+                "miscellaneous msg, chain_id: id_v0 = {}, id_v1 = {}",
+                chain_id.id_v0,
+                chain_id.id_v1
+            );
+        }
+
+        let msg: Message = miscellaneous.into();
         self.ctx_pub
             .send((
                 routing_key!(Executor >> Miscellaneous).into(),
@@ -417,71 +447,96 @@ impl ExecutorInstance {
 
             Request::meta_data(data) => {
                 trace!("metadata request from jsonrpc {:?}", data);
-                match serde_json::from_str::<BlockNumber>(&data)
-                    .map_err(|err| (ErrorCode::query_error(), format!("{:?}", err)))
+                let economical_model: EconomicalModel = (*self.ext.economical_model.read()).into();
+                let mut metadata = MetaData {
+                    chain_id: 0,
+                    chain_id_v1: U256::from(0).lower_hex(),
+                    chain_name: "".to_owned(),
+                    operator: "".to_owned(),
+                    website: "".to_owned(),
+                    genesis_timestamp: 0,
+                    validators: Vec::new(),
+                    block_interval: 0,
+                    token_name: "".to_owned(),
+                    token_symbol: "".to_owned(),
+                    token_avatar: "".to_owned(),
+                    version: 0,
+                    economical_model,
+                };
+                let result = serde_json::from_str::<BlockNumber>(&data)
+                    .map_err(|err| format!("{:?}", err))
                     .and_then(|number: BlockNumber| {
                         let current_height = self.ext.get_current_height();
                         let number = match number {
                             BlockNumber::Tag(BlockTag::Earliest) => 0,
                             BlockNumber::Height(n) => n.into(),
-                            BlockNumber::Tag(BlockTag::Latest) => current_height,
+                            BlockNumber::Tag(BlockTag::Latest) => current_height.saturating_sub(1),
+                            BlockNumber::Tag(BlockTag::Pending) => current_height,
                         };
                         if number > current_height {
-                            Err((
-                                ErrorCode::query_error(),
-                                format!("Block number overflow: {} > {}", number, current_height),
+                            Err(format!(
+                                "Block number overflow: {} > {}",
+                                number, current_height
                             ))
                         } else {
                             Ok(number)
                         }
                     })
-                    .and_then(|number: u64| {
+                    .and_then(|number| {
                         let sys_config = SysConfig::new(&self.ext);
                         let block_id = BlockId::Number(number);
+                        sys_config
+                            .chain_name(block_id)
+                            .map(|chain_name| metadata.chain_name = chain_name)
+                            .ok_or_else(|| "Query chain name failed".to_owned())?;
+                        sys_config
+                            .operator(block_id)
+                            .map(|operator| metadata.operator = operator)
+                            .ok_or_else(|| "Query operator failed".to_owned())?;
+                        sys_config
+                            .website(block_id)
+                            .map(|website| metadata.website = website)
+                            .ok_or_else(|| "Query website failed".to_owned())?;
+                        self.ext
+                            .block_header(BlockId::Earliest)
+                            .map(|header| metadata.genesis_timestamp = header.timestamp())
+                            .ok_or_else(|| "Query genesis_timestamp failed".to_owned())?;
+                        self.ext
+                            .node_manager()
+                            .shuffled_stake_nodes(block_id)
+                            .map(|validators| metadata.validators = validators)
+                            .ok_or_else(|| "Query validators failed".to_owned())?;
+                        sys_config
+                            .block_interval(block_id)
+                            .map(|block_interval| metadata.block_interval = block_interval)
+                            .ok_or_else(|| "Query block_interval failed".to_owned())?;
+                        sys_config
+                            .token_info(block_id)
+                            .map(|token_info| {
+                                metadata.token_name = token_info.name;
+                                metadata.token_avatar = token_info.avatar;
+                                metadata.token_symbol = token_info.symbol;
+                            })
+                            .ok_or_else(|| "Query token info failed".to_owned())?;
+
+                        let version_manager = VersionManager::new(&*self.ext);
+                        metadata.version = version_manager
+                            .get_version(block_id)
+                            .unwrap_or_else(VersionManager::default_version);
 
                         sys_config
-                            .chain_name(Some(block_id))
-                            .and_then(|chain_name| {
-                                sys_config.operator(Some(block_id)).and_then(|operator| {
-                                    sys_config
-                                        .website(Some(block_id))
-                                        .and_then(|website| Ok((chain_name, operator, website)))
-                                })
+                            .deal_chain_id_version(&version_manager)
+                            .map(|chain_id| {
+                                metadata.chain_id = chain_id.id_v0;
+                                metadata.chain_id_v1 = chain_id.id_v1.lower_hex()
                             })
-                            .map_err(|_| {
-                                (
-                                    ErrorCode::query_error(),
-                                    format!("get system config at height {} failed", number),
-                                )
-                            })
-                    })
-                    .map(|(chain_name, operator, website)| {
-                        // TODO: get chain_name by current block number
-                        let sys_config = SysConfig::new(&self.ext);
-                        let genesis_timestamp = self
-                            .ext
-                            .block_header(BlockId::Earliest)
-                            .unwrap()
-                            .timestamp();
-                        let token = sys_config.token_info();
-                        MetaData {
-                            genesis_timestamp,
-                            chain_id: sys_config.chain_id(),
-                            chain_name,
-                            operator,
-                            website,
-                            validators: self.ext.node_manager().shuffled_stake_nodes(),
-                            block_interval: sys_config.block_interval(),
-                            token_name: token.name,
-                            token_avatar: token.avatar,
-                            token_symbol: token.symbol,
-                        }
-                    }) {
-                    Ok(metadata) => {
-                        response.set_meta_data(serde_json::to_string(&metadata).unwrap())
-                    }
-                    Err((code, error_msg)) => {
-                        response.set_code(code);
+                            .ok_or_else(|| "Query chain id failed".to_owned())?;
+                        Ok(())
+                    });
+                match result {
+                    Ok(_) => response.set_meta_data(serde_json::to_string(&metadata).unwrap()),
+                    Err(error_msg) => {
+                        response.set_code(ErrorCode::query_error());
                         response.set_error_msg(error_msg);
                     }
                 }
@@ -503,6 +558,33 @@ impl ExecutorInstance {
                             None => {
                                 response.set_code(ErrorCode::query_error());
                                 response.set_error_msg("get state proof failed".to_string());
+                            }
+                        }
+                    })
+                    .map_err(|err| {
+                        response.set_code(ErrorCode::query_error());
+                        response.set_error_msg(format!("{:?}", err));
+                    });
+            }
+            Request::storage_key(skey) => {
+                trace!("storage key info is {:?}", skey);
+                let _ = serde_json::from_str::<BlockNumber>(&skey.height)
+                    .map(|block_id| {
+                        match self.ext.state_at(block_id.into()).and_then(|state| {
+                            state
+                                .storage_at(
+                                    &Address::from(skey.get_address()),
+                                    &H256::from(skey.get_position()),
+                                )
+                                .ok()
+                        }) {
+                            Some(storage_val) => {
+                                response.set_storage_value(storage_val.to_vec());
+                            }
+                            None => {
+                                response.set_code(ErrorCode::query_error());
+                                response
+                                    .set_error_msg("get storage at something failed".to_string());
                             }
                         }
                     })
@@ -534,11 +616,12 @@ impl ExecutorInstance {
         let block = Block::from(proto_block);
 
         debug!(
-            "consensus block {} {:?} tx hash  {:?} len {}",
+            "consensus block {} {:?} tx hash  {:?} len {} version {}",
             block.number(),
             block.hash(),
             block.transactions_root(),
-            block.body().transactions().len()
+            block.body().transactions().len(),
+            block.header.version()
         );
         if self.is_dup_block(block.number()) {
             return;
@@ -755,14 +838,15 @@ impl ExecutorInstance {
         } else {
             proof.height as u64
         };
-        let conf = self.ext.get_sys_config(number);
+        let conf = self.ext.global_config.read().clone();
         let authorities = conf.nodes.clone();
 
-        //fixbug when conf have changed such as adding consensus node
-        let prev_conf = self.ext.get_sys_config(number - 1);
+        // fixbug when conf have changed such as adding consensus node
+        let prev_conf = self.ext.load_config(BlockId::Number(number - 1));
         let prev_authorities = prev_conf.nodes.clone();
 
-        if self.ext.validate_height(number) && self.ext.validate_hash(block.parent_hash())
+        if self.ext.validate_height(number)
+            && self.ext.validate_hash(block.parent_hash())
             && (proof.check(proof_height as usize, &authorities)
                 || proof.check(proof_height as usize, &prev_authorities))
         {

@@ -40,7 +40,7 @@ pub trait AsMillis {
 
 impl AsMillis for Duration {
     fn as_millis(&self) -> u64 {
-        self.as_secs() * 1_000 + u64::from(self.subsec_nanos() / 1_000_000)
+        self.as_secs() * 1_000 + u64::from(self.subsec_millis())
     }
 }
 
@@ -67,7 +67,7 @@ impl Generateblock {
         tx.set_data(data);
         tx.set_nonce("0".to_string());
         tx.set_quota(quota);
-        //设置空，则创建合约
+        // create contract if `to_address` empty
         tx.set_to(address);
         tx.set_valid_until_block(99_999);
         tx.sign(pv)
@@ -84,7 +84,9 @@ impl Generateblock {
 
         let mut block = Block::new();
         let block_time = Self::unix_now();
-        block.mut_header().set_timestamp(block_time.as_millis());
+        block
+            .mut_header()
+            .set_timestamp(AsMillis::as_millis(&block_time));
         block.mut_header().set_height(h);
         block.mut_header().set_prevhash(pre_hash.0.to_vec());
         block.mut_body().set_transactions(txs.into());
@@ -102,7 +104,8 @@ impl Generateblock {
                 Some(proof.proposal),
             ),
             Infinite,
-        ).unwrap();
+        )
+        .unwrap();
         let signature = Signature::sign(pv, &msg.crypt_hash()).unwrap();
         commits.insert((*sender).into(), signature);
         proof.commits = commits;

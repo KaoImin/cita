@@ -2,13 +2,13 @@ pragma solidity ^0.4.24;
 
 import "../lib/address_array.sol";
 import "../common/address.sol";
-
+import "../interfaces/role.sol";
 
 /// @title Role contract
 /// @author ["Cryptape Technologies <contact@cryptape.com>"]
 /// @notice The address: Created by roleCreator
 ///         The interface can be called: Only query type
-contract Role is ReservedAddress {
+contract Role is IRole, ReservedAddress {
 
     event NameUpdated(bytes32 indexed _oldName, bytes32 indexed _newName);
     event PermissionsAdded(address[] _permissions);
@@ -19,7 +19,7 @@ contract Role is ReservedAddress {
     address[] permissions;
 
     modifier onlyRoleManagement {
-        require(roleManagementAddr == msg.sender);
+        require(roleManagementAddr == msg.sender, "permission denied.");
         _;
     }
 
@@ -58,7 +58,7 @@ contract Role is ReservedAddress {
     /// @param _permissions The permissions of role
     /// @return true if successed, otherwise false
     function addPermissions(address[] _permissions)
-        public
+        external
         onlyRoleManagement
         returns (bool)
     {
@@ -76,7 +76,7 @@ contract Role is ReservedAddress {
     /// @param _permissions The permissions of role
     /// @return true if successed, otherwise false
     function deletePermissions(address[] _permissions)
-        public
+        external
         onlyRoleManagement
         returns (bool)
     {

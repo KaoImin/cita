@@ -9,7 +9,7 @@
       "request": {
         "method": "getTransactionReceipt",
         "params": [
-          "0x919acce87f8cb141557f6223c13a6e46fbb0d3e51f5f06f3b4aa5c51f4f6e113"
+          "0xd7363c838d68065c7a8b02b2f5e27efe15c512f421a4a6ede23ef0a389ca7ef6"
         ]
       },
       "expectedResponse": {
@@ -17,14 +17,14 @@
           "blockHash": "0x35cd08bbcca3fa970d315c8cd13114675e7604e384abeaeba6e1f7eb4d2e2140",
           "blockNumber": "0x2",
           "contractAddress": "0xfdde938c6f71b066eb34c1c92e5814186dbdcb5e",
-          "cumulativeGasUsed": "0xc8c7",
+          "cumulativeQuotaUsed": "0xc8c7",
           "errorMessage": null,
-          "gasUsed": "0xc8c7",
+          "quotaUsed": "0xc8c7",
           "logs": [
           ],
           "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "root": null,
-          "transactionHash": "0x919acce87f8cb141557f6223c13a6e46fbb0d3e51f5f06f3b4aa5c51f4f6e113",
+          "transactionHash": "0xd7363c838d68065c7a8b02b2f5e27efe15c512f421a4a6ede23ef0a389ca7ef6",
           "transactionIndex": "0x0"
         }
       },
@@ -60,9 +60,9 @@
           "blockHash": "0xbdb92db248f0a644300c76726be3966eea636e03c19236a57a92fb5b2c91a7a1",
           "blockNumber": "0xc",
           "contractAddress": "0xa31af83ee35e753a2bb19c2a82468080c2e92eee",
-          "cumulativeGasUsed": "0x18827",
+          "cumulativeQuotaUsed": "0x18827",
           "errorMessage": null,
-          "gasUsed": "0x18827",
+          "quotaUsed": "0x18827",
           "logs": [
             {
               "address": "0xa31af83ee35e753a2bb19c2a82468080c2e92eee",
@@ -112,7 +112,7 @@
       ]
     },
     {
-      "title": "getTransactionReceipt with transaction hash and return errorMessage(Not enough base gas.)",
+      "title": "getTransactionReceipt with transaction hash and return errorMessage(Not enough base quota.)",
       "request": {
         "method": "getTransactionReceipt",
         "params": [
@@ -124,9 +124,9 @@
           "blockHash": "0x16c546532796ed01b49220e2e2f37ce2bba2faca24e3a7f510c69f5beb3459fa",
           "blockNumber": "0x7",
           "contractAddress": null,
-          "cumulativeGasUsed": "0x0",
-          "errorMessage": "Not enough base gas.",
-          "gasUsed": "0x0",
+          "cumulativeQuotaUsed": "0x0",
+          "errorMessage": "Not enough base quota.",
+          "quotaUsed": "0x0",
           "logs": [
           ],
           "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
@@ -157,13 +157,13 @@
           "program": ".receivedResponse.result.logs == .expectedResponse.result.logs"
         },
         {
-          "description": "getTransactionReceipt result.gasUsed should be equal",
-          "program": ".receivedResponse.result.gasUsed == .expectedResponse.result.gasUsed"
+          "description": "getTransactionReceipt result.quotaUsed should be equal",
+          "program": ".receivedResponse.result.quotaUsed == .expectedResponse.result.quotaUsed"
         }
       ]
     },
     {
-      "title": "getTransactionReceipt with transaction hash and return errorMessage(Out of gas.)",
+      "title": "getTransactionReceipt with transaction hash and return errorMessage(Out of quota.)",
       "request": {
         "method": "getTransactionReceipt",
         "params": [
@@ -175,9 +175,9 @@
           "blockHash": "0xaa5d2b3ef948dfb989f2210840c061a5a47112b660fd9cf2a671ffadd51242d1",
           "blockNumber": "0x8",
           "contractAddress": null,
-          "cumulativeGasUsed": "0x40000001",
-          "errorMessage": "Out of gas.",
-          "gasUsed": "0x40000001",
+          "cumulativeQuotaUsed": "0x40000001",
+          "errorMessage": "Out of quota.",
+          "quotaUsed": "0x40000001",
           "logs": [
           ],
           "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
@@ -208,8 +208,8 @@
           "program": ".receivedResponse.result.logs == .expectedResponse.result.logs"
         },
         {
-          "description": "getTransactionReceipt result.gasUsed should be equal",
-          "program": ".receivedResponse.result.gasUsed == .expectedResponse.result.gasUsed"
+          "description": "getTransactionReceipt result.quotaUsed should be equal",
+          "program": ".receivedResponse.result.quotaUsed == .expectedResponse.result.quotaUsed"
         }
       ]
     },
@@ -218,7 +218,7 @@
       "request": {
         "method": "getTransactionReceipt",
         "params": [
-          "0x5bddf39ab57bf08e7f0385ad58e012365a9fe0794a889980c0a40f3311ffbc89"
+          "0xcb55625ee53ac7479910a5b97b8cef92b109d9b5af4df422d2f922bcea1118be"
         ]
       },
       "expectedResponse": {
@@ -226,14 +226,14 @@
           "blockHash": "0x91f4e498a95794fd9660e3687bf86f19668a5ea67fa44fdc76cf145f030aee2a",
           "blockNumber": "0xa",
           "contractAddress": null,
-          "cumulativeGasUsed": "0x2710",
+          "cumulativeQuotaUsed": "0x2710",
           "errorMessage": "Not enough stack elements to execute instruction.",
-          "gasUsed": "0x2710",
+          "quotaUsed": "0x2710",
           "logs": [
           ],
           "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "root": null,
-          "transactionHash": "0x5bddf39ab57bf08e7f0385ad58e012365a9fe0794a889980c0a40f3311ffbc89",
+          "transactionHash": "0xcb55625ee53ac7479910a5b97b8cef92b109d9b5af4df422d2f922bcea1118be",
           "transactionIndex": "0x0"
         }
       },

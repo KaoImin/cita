@@ -1,6 +1,8 @@
 # <img src="https://github.com/cryptape/assets/blob/master/CITA-logo.png?raw=true" width="256">
 
-[![Join the chat at https://gitter.im/cryptape/cita](https://badges.gitter.im/cryptape/cita.svg)](https://gitter.im/cryptape/cita?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge) [![Build Status](https://travis-ci.org/cryptape/cita.svg?branch=develop)](https://travis-ci.org/cryptape/cita)
+[![Build Status](https://travis-ci.org/cryptape/cita.svg?branch=develop)](https://travis-ci.org/cryptape/cita)
+
+English | [简体中文](./README-CN.md)
 
 ## What is CITA
 
@@ -38,13 +40,13 @@ For more details please check the white paper.
 
 ## API/SDK
 
-CITA supports JSON-RPC and WebSocket (experimental) API/v1. 
+CITA supports JSON-RPC and WebSocket (experimental) API/v1.
 
 For CITA API/v1, You can use any HTTP client, or following SDKs:
 
-* [Java](https://github.com/cryptape/web3j)
+* [Java](https://github.com/cryptape/nervosj)
 * [Rust](https://github.com/cryptape/rust-web3)
-* [Javascript](https://github.com/cryptape/web3)
+* [JavaScript](https://github.com/cryptape/nervos.js)
 
 ## Contributing
 
@@ -66,12 +68,10 @@ CITA is currently under the GPLv3 license. See the LICENSE file for details.
 
 ## Credits
 
-<img src="https://github.com/cryptape/assets/blob/master/cryptape-thinking-ape.png?raw=true">
+<img src="https://github.com/cryptape/assets/blob/master/cryptape-logo-square.png?raw=true">
 
 CITA is created by Cryptape team with :heart:.
 
 ## Contact us
 
-WeChat Group:
-
-<img src="https://github.com/cryptape/assets/blob/master/cryptape-wechat.jpeg?raw=true" width="250">
+[Telegram Group](https://t.me/joinchat/E7dJKFL8xTwCe8MaiZWdhw)

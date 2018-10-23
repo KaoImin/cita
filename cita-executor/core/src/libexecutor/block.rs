@@ -17,12 +17,13 @@
 
 use basic_types::LogBloom;
 use cita_types::{Address, H256, U256};
+use contracts::solc::PriceManagement;
 use engines::Engine;
 use error::Error;
 use evm::env_info::{EnvInfo, LastHashes};
 use factory::Factories;
 use header::*;
-use libexecutor::executor::{EconomicalModel, Executor, GlobalSysConfig};
+use libexecutor::executor::{CheckOptions, EconomicalModel, Executor, GlobalSysConfig};
 use libproto::blockchain::SignedTransaction as ProtoSignedTransaction;
 use libproto::blockchain::{Block as ProtoBlock, BlockBody as ProtoBlockBody};
 use libproto::executor::{ExecutedInfo, ReceiptWithOption};
@@ -36,6 +37,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use trace::FlatTrace;
+use types::ids::BlockId;
 use types::transaction::SignedTransaction;
 use util::{merklehash, HeapSizeOf};
 
@@ -231,10 +233,10 @@ impl ClosedBlock {
             .set_log_bloom(self.log_bloom().to_vec());
         executed_info
             .mut_header()
-            .set_gas_used(u64::from(*self.gas_used()));
+            .set_quota_used(u64::from(*self.quota_used()));
         executed_info
             .mut_header()
-            .set_gas_limit(self.gas_limit().low_u64());
+            .set_quota_limit(self.gas_limit().low_u64());
 
         executed_info.receipts = self
             .receipts
@@ -279,7 +281,7 @@ pub struct ExecutedBlock {
     pub block: Block,
     pub receipts: Vec<Receipt>,
     pub state: State<StateDB>,
-    pub current_gas_used: U256,
+    pub current_quota_used: U256,
     traces: Option<Vec<Vec<FlatTrace>>>,
 }
 
@@ -309,7 +311,7 @@ impl ExecutedBlock {
             block,
             receipts: Default::default(),
             state,
-            current_gas_used: U256::zero(),
+            current_quota_used: U256::zero(),
             traces: if tracing { Some(Vec::new()) } else { None },
         }
     }
@@ -386,7 +388,7 @@ impl OpenBlock {
             timestamp: self.timestamp(),
             difficulty: U256::default(),
             last_hashes: Arc::clone(&self.last_hashes),
-            gas_used: self.current_gas_used,
+            gas_used: self.current_quota_used,
             gas_limit: *self.gas_limit(),
             account_gas_limit: 0.into(),
         }
@@ -397,24 +399,30 @@ impl OpenBlock {
     pub fn apply_transactions(
         &mut self,
         executor: &Executor,
-        check_permission: bool,
-        check_quota: bool,
-        check_fee_back_platform: bool,
         chain_owner: Address,
+        check_options: &CheckOptions,
     ) -> bool {
-        for (index, t) in self.body.transactions.clone().into_iter().enumerate() {
+        let price_management = PriceManagement::new(executor);
+        let quota_price = price_management
+            .quota_price(BlockId::Pending)
+            .unwrap_or_else(PriceManagement::default_quota_price);
+        for (index, mut t) in self.body.transactions.clone().into_iter().enumerate() {
             if index & CHECK_NUM == 0 && executor.is_interrupted.load(Ordering::SeqCst) {
                 executor.is_interrupted.store(false, Ordering::SeqCst);
                 return false;
             }
+
+            let economical_model: EconomicalModel = *executor.economical_model.read();
+            if economical_model == EconomicalModel::Charge {
+                t.gas_price = quota_price;
+            }
+
             self.apply_transaction(
                 &*executor.engine,
                 &t,
-                check_permission,
-                check_quota,
                 *executor.economical_model.read(),
-                check_fee_back_platform,
                 chain_owner,
+                check_options,
             );
         }
 
@@ -423,21 +431,19 @@ impl OpenBlock {
         let new_now = Instant::now();
         debug!("state root use {:?}", new_now.duration_since(now));
 
-        let gas_used = self.current_gas_used;
-        self.set_gas_used(gas_used);
+        let quota_used = self.current_quota_used;
+        self.set_quota_used(quota_used);
         true
     }
 
-    #[allow(unknown_lints, too_many_arguments)] // TODO clippy
+    #[allow(unknown_lints, clippy::too_many_arguments)] // TODO clippy
     pub fn apply_transaction(
         &mut self,
         engine: &Engine,
         t: &SignedTransaction,
-        check_permission: bool,
-        check_quota: bool,
         economical_model: EconomicalModel,
-        check_fee_back_platform: bool,
         chain_owner: Address,
+        check_options: &CheckOptions,
     ) {
         let mut env_info = self.env_info();
         self.account_gas
@@ -454,22 +460,20 @@ impl OpenBlock {
             engine,
             t,
             has_traces,
-            check_permission,
-            check_quota,
             economical_model,
-            check_fee_back_platform,
             chain_owner,
+            check_options,
         ) {
             Ok(outcome) => {
                 trace!("apply signed transaction {} success", t.hash());
                 if let Some(ref mut traces) = self.traces {
                     traces.push(outcome.trace);
                 }
-                let transaction_gas_used = outcome.receipt.gas_used - self.current_gas_used;
-                self.current_gas_used = outcome.receipt.gas_used;
-                if check_quota {
+                let transaction_quota_used = outcome.receipt.quota_used - self.current_quota_used;
+                self.current_quota_used = outcome.receipt.quota_used;
+                if check_options.quota {
                     if let Some(value) = self.account_gas.get_mut(t.sender()) {
-                        *value = *value - transaction_gas_used;
+                        *value = *value - transaction_quota_used;
                     }
                 }
                 self.receipts.push(outcome.receipt);
@@ -485,7 +489,8 @@ impl OpenBlock {
         self.set_state_root(state_root);
         let receipts_root = merklehash::MerkleTree::from_bytes(
             self.receipts.iter().map(|r| r.rlp_bytes().to_vec()),
-        ).get_root_hash();
+        )
+        .get_root_hash();
         self.set_receipts_root(receipts_root);
 
         // blocks blooms
@@ -514,9 +519,7 @@ mod tests {
         let mut stx = SignedTransaction::default();
         stx.data = vec![1; 200];
         let transactions = vec![stx; 200];
-        let body = BlockBody {
-            transactions: transactions,
-        };
+        let body = BlockBody { transactions };
         let body_rlp = rlp::encode(&body);
         let body: BlockBody = rlp::decode(&body_rlp);
         let body_encoded = rlp::encode(&body).into_vec();

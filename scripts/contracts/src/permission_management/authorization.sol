@@ -1,59 +1,41 @@
 pragma solidity ^0.4.24;
 
-import "./permission.sol";
 import "../lib/address_array.sol";
 import "../common/address.sol";
-import "../system/sys_config.sol";
-
+import "../interfaces/sys_config.sol";
+import "../interfaces/authorization.sol";
 
 /// @title Authorization about the permission and account
 /// @author ["Cryptape Technologies <contact@cryptape.com>"]
 /// @notice The address: 0xffffffffffffffffffffffffffffffffff020006
 ///         The interface can be called: Only query type
-contract Authorization is ReservedAddress {
+contract Authorization is IAuthorization, ReservedAddress {
 
     mapping(address => address[]) permissions;
     mapping(address => address[]) accounts;
 
     address[] all_accounts;
-    SysConfig sysConfig = SysConfig(sysConfigAddr);
+    ISysConfig sysConfig = ISysConfig(sysConfigAddr);
 
     event AuthSetted(address indexed _account, address indexed _permission);
     event AuthCanceled(address indexed _account, address indexed _permission);
     event AuthCleared(address indexed _account);
 
     modifier onlyPermissionManagement {
-        require(permissionManagementAddr == msg.sender || roleAuthAddr == msg.sender );
+        require(permissionManagementAddr == msg.sender || roleAuthAddr == msg.sender, "permission denied");
         _;
     }
 
     modifier notSuperAdmin(address _account) {
-        require(_account != all_accounts[0]);
+        require(_account != all_accounts[0], "not superAdmin");
         _;
     }
 
     /// @notice Initialize the superAdmin's auth
     constructor(address _superAdmin) public {
-        _setAuth(_superAdmin, sendTxAddr);
-        _setAuth(_superAdmin, createContractAddr);
-        _setAuth(_superAdmin, newPermissionAddr);
-        _setAuth(_superAdmin, deletePermissionAddr);
-        _setAuth(_superAdmin, updatePermissionAddr);
-        _setAuth(_superAdmin, setAuthAddr);
-        _setAuth(_superAdmin, cancelAuthAddr);
-        _setAuth(_superAdmin, newRoleAddr);
-        _setAuth(_superAdmin, deleteRoleAddr);
-        _setAuth(_superAdmin, updateRoleAddr);
-        _setAuth(_superAdmin, setRoleAddr);
-        _setAuth(_superAdmin, cancelRoleAddr);
-        _setAuth(_superAdmin, newGroupAddr);
-        _setAuth(_superAdmin, deleteGroupAddr);
-        _setAuth(_superAdmin, updateGroupAddr);
-        _setAuth(_superAdmin, newNodeAddr);
-        _setAuth(_superAdmin, deleteNodeAddr);
-        _setAuth(_superAdmin, updateNodeAddr);
-        _setAuth(_superAdmin, accountQuotaAddr);
-        _setAuth(_superAdmin, blockQuotaAddr);
+        for (uint8 i;i < builtInPermissions.length; i++)
+            _setAuth(_superAdmin, builtInPermissions[i]);
+
         // rootGroup: basic permissions
         _setAuth(rootGroupAddr, sendTxAddr);
         _setAuth(rootGroupAddr, createContractAddr);
@@ -155,25 +137,22 @@ contract Authorization is ReservedAddress {
         return all_accounts;
     }
 
-    /// @notice Check account has a resource
-    /// @param _account The account to be checked
-    /// @param _cont The contract of resource
-    /// @param _func The function signature of resource
+    /// @notice Check account has a resource(deprecation)
     /// @return true if passed, otherwise false
-    function checkResource(address _account, address _cont, bytes4 _func)
+    function checkResource(address, address, bytes4)
         public
-        view
+        pure
         returns (bool)
     {
-        address[] memory perms = queryPermissions(_account);
+        // address[] memory perms = queryPermissions(_account);
 
-        for (uint i = 0; i < perms.length; i++) {
-            Permission perm = Permission(perms[i]);
-            if (perm.inPermission(_cont, _func))
-                return true;
-        }
+        // for (uint i = 0; i < perms.length; i++) {
+        //     Permission perm = Permission(perms[i]);
+        //     if (perm.inPermission(_cont, _func))
+        //         return true;
+        // }
 
-        return false;
+        // return false;
     }
 
     /// @notice Check account has a permission

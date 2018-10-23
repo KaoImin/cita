@@ -20,14 +20,15 @@
 //! or rolled back.
 
 use cita_types::{Address, H256, U256};
-use contracts::Resource;
+use contracts::solc::Resource;
 use engines::Engine;
 use error::{Error, ExecutionError};
 use evm::env_info::EnvInfo;
 use evm::Error as EvmError;
+use evm::Schedule;
 use executive::{Executive, TransactOptions};
 use factory::Factories;
-use libexecutor::executor::EconomicalModel;
+use libexecutor::executor::{CheckOptions, EconomicalModel};
 use receipt::{Receipt, ReceiptError};
 use rlp::{self, Encodable};
 use std::cell::{Ref, RefCell, RefMut};
@@ -190,7 +191,8 @@ impl StateProof {
             state_root,
             &self.account_proof,
             Account::from_rlp,
-        ).and_then(|a| a.verify_value_proof(&self.key, &self.value_proof))
+        )
+        .and_then(|a| a.verify_value_proof(&self.key, &self.value_proof))
     }
 
     /// Get the address field of the StateProof.
@@ -303,12 +305,12 @@ impl<B: Backend> State<B> {
         }
 
         State {
-            db: db,
-            root: root,
+            db,
+            root,
             cache: RefCell::new(HashMap::new()),
             checkpoints: RefCell::new(Vec::new()),
-            account_start_nonce: account_start_nonce,
-            factories: factories,
+            account_start_nonce,
+            factories,
             account_permissions: HashMap::new(),
             group_accounts: HashMap::new(),
             super_admin_account: None,
@@ -607,8 +609,9 @@ impl<B: Backend> State<B> {
                                             account_proof,
                                             key: *key,
                                             value_proof,
-                                        }.rlp_bytes()
-                                            .into_vec()
+                                        }
+                                        .rlp_bytes()
+                                        .into_vec()
                                     })
                             })
                         })
@@ -716,7 +719,7 @@ impl<B: Backend> State<B> {
             || Account::new_contract(0.into(), self.account_start_nonce),
             |_| {},
         )?
-            .init_code(code);
+        .init_code(code);
         Ok(())
     }
 
@@ -729,7 +732,7 @@ impl<B: Backend> State<B> {
             || Account::new_contract(0.into(), self.account_start_nonce),
             |_| {},
         )?
-            .reset_code(code);
+        .reset_code(code);
         Ok(())
     }
 
@@ -743,7 +746,7 @@ impl<B: Backend> State<B> {
             || Account::new_contract(0.into(), self.account_start_nonce),
             |_| {},
         )?
-            .init_abi(abi);
+        .init_abi(abi);
         Ok(())
     }
 
@@ -756,30 +759,30 @@ impl<B: Backend> State<B> {
             || Account::new_contract(0.into(), self.account_start_nonce),
             |_| {},
         )?
-            .reset_abi(abi);
+        .reset_abi(abi);
         Ok(())
     }
 
     /// Execute a given transaction.
     /// This will change the state accordingly.
-    #[allow(unknown_lints, too_many_arguments)] // TODO clippy
+    #[allow(unknown_lints, clippy::too_many_arguments)] // TODO clippy
     pub fn apply(
         &mut self,
         env_info: &EnvInfo,
         engine: &Engine,
         t: &SignedTransaction,
         tracing: bool,
-        check_permission: bool,
-        check_quota: bool,
         economical_model: EconomicalModel,
-        check_fee_back_platform: bool,
         chain_owner: Address,
+        check_options: &CheckOptions,
     ) -> ApplyResult {
         let options = TransactOptions {
             tracing,
             vm_tracing: false,
-            check_permission,
-            check_quota,
+            check_permission: check_options.permission,
+            check_quota: check_options.quota,
+            check_send_tx_permission: check_options.send_tx_permission,
+            check_create_contract_permission: check_options.create_contract_permission,
         };
         let vm_factory = self.factories.vm.clone();
         let native_factory = self.factories.native.clone();
@@ -792,14 +795,15 @@ impl<B: Backend> State<B> {
             &native_factory,
             false,
             economical_model,
-            check_fee_back_platform,
+            check_options.fee_back_platform,
             chain_owner,
-        ).transact(t, options)
+        )
+        .transact(t, options)
         {
             Ok(e) => {
                 // trace!("Applied transaction. Diff:\n{}\n", state_diff::diff_pod(&old, &self.to_pod()));
                 let receipt_error = e.exception.and_then(|evm_error| match evm_error {
-                    EvmError::OutOfGas => Some(ReceiptError::OutOfGas),
+                    EvmError::OutOfGas => Some(ReceiptError::OutOfQuota),
                     EvmError::BadJumpDestination { .. } => Some(ReceiptError::BadJumpDestination),
                     EvmError::BadInstruction { .. } => Some(ReceiptError::BadInstruction),
                     EvmError::StackUnderflow { .. } => Some(ReceiptError::StackUnderflow),
@@ -827,12 +831,14 @@ impl<B: Backend> State<B> {
             }
             Err(err) => {
                 let receipt_error = match err {
-                    ExecutionError::NotEnoughBaseGas { .. } => Some(ReceiptError::NotEnoughBaseGas),
+                    ExecutionError::NotEnoughBaseGas { .. } => {
+                        Some(ReceiptError::NotEnoughBaseQuota)
+                    }
                     ExecutionError::BlockGasLimitReached { .. } => {
-                        Some(ReceiptError::BlockGasLimitReached)
+                        Some(ReceiptError::BlockQuotaLimitReached)
                     }
                     ExecutionError::AccountGasLimitReached { .. } => {
-                        Some(ReceiptError::AccountGasLimitReached)
+                        Some(ReceiptError::AccountQuotaLimitReached)
                     }
                     ExecutionError::InvalidNonce { .. } => Some(ReceiptError::InvalidNonce),
                     ExecutionError::NotEnoughCash { .. } => Some(ReceiptError::NotEnoughCash),
@@ -850,28 +856,32 @@ impl<B: Backend> State<B> {
                         Some(ReceiptError::TransactionMalformed)
                     }
                 };
+                let schedule = Schedule::new_v1();
                 let sender = *t.sender();
                 let tx_gas_used = match err {
                     ExecutionError::ExecutionInternal { .. } => t.gas,
                     _ => cmp::min(
                         self.balance(&sender).unwrap_or_else(|_| U256::from(0)),
-                        U256::from(100),
+                        U256::from(schedule.tx_gas),
                     ),
                 };
+
                 if economical_model == EconomicalModel::Charge {
-                    let tx_fee_value = tx_gas_used * t.gas_price();
+                    let fee_value = tx_gas_used * t.gas_price();
+                    let sender_balance = self.balance(&sender).unwrap();
+
+                    let tx_fee_value = if fee_value > sender_balance {
+                        sender_balance
+                    } else {
+                        fee_value
+                    };
                     if let Err(err) = self.sub_balance(&sender, &tx_fee_value) {
                         error!("Sub balance from error transaction sender failed, tx_fee_value={}, error={:?}", tx_fee_value, err);
                     }
 
-                    if check_fee_back_platform {
-                        if chain_owner == Address::from(0) {
-                            self.add_balance(&env_info.author, &tx_fee_value)
-                                .expect("Add balance to author(miner) must success");
-                        } else {
-                            self.add_balance(&chain_owner, &tx_fee_value)
-                                .expect("Add balance to chain owner must success");
-                        }
+                    if check_options.fee_back_platform && chain_owner != Address::from(0) {
+                        self.add_balance(&chain_owner, &tx_fee_value)
+                            .expect("Add balance to chain owner must success");
                     } else {
                         self.add_balance(&env_info.author, &tx_fee_value)
                             .expect("Add balance to author(miner) must success");
@@ -1334,17 +1344,23 @@ mod tests {
         let engine = NullEngine::cita();
 
         println!("contract_address {:?}", contract_address);
+
+        let check_options = CheckOptions {
+            permission: false,
+            quota: false,
+            fee_back_platform: false,
+            send_tx_permission: false,
+            create_contract_permission: false,
+        };
         let result = state
             .apply(
                 &info,
                 &engine,
                 &signed,
                 true,
-                false,
-                false,
                 Default::default(),
-                false,
                 Address::from(0),
+                &check_options,
             )
             .unwrap();
         println!(
