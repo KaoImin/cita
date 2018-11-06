@@ -96,7 +96,7 @@ CITA 中存在两种经济模型，Quota(默认) 和 Charge。
 
 ## 配置工具
 
-在 `docker` 环境下，我们使用 `./script/create_cita_config.py` 来构建一条链， 有两种模式：
+在 `docker` 环境下，我们使用 `./scripts/create_cita_config.py` 来构建一条链， 有两种模式：
 
 * create: 创建全新的一条链
 * append: 为已运行链新增一个节点
@@ -106,7 +106,7 @@ CITA 中存在两种经济模型，Quota(默认) 和 Charge。
 ### Create 配置
 
 ```shell
-$ ./env.sh ./script/create_cita_config.py create --help
+$ ./env.sh ./scripts/create_cita_config.py create --help
 
 usage: create_cita_config.py create [-h]
                                     [--authorities AUTHORITY[,AUTHORITY[,AUTHORITY[,AUTHORITY[, ...]]]]]
@@ -119,6 +119,7 @@ usage: create_cita_config.py create [-h]
                                     [--grpc_port GRPC_PORT]
                                     [--jsonrpc_port JSONRPC_PORT]
                                     [--ws_port WS_PORT]
+                                    [--enable_tls]
 ```
 
 必要参数解释：
@@ -127,6 +128,7 @@ usage: create_cita_config.py create [-h]
 * `nodes` : 指定节点的 ip 地址和端口
 * `super_admin` : 指定超级管理员地址
 * `contract_arguments` : 设定系统合约的默认值，这个参数具体的信息请详细查看系统合约文档
+* `enable_tls` : 指定节点间数据是否使用tls(Transport Layer Security)加密传输，不加此选项默认为不加密传输
 
 注意事项：
 
@@ -140,19 +142,20 @@ usage: create_cita_config.py create [-h]
     * 默认的 `jsonrpc` 端口：1337 到 1337 + N
     * 默认的 `websocket` 端口：4337 到 4337+N
     * 默认的 `rabbitmq` 端口：4369(epmd)/25672(Erlang distribution)/5671，5672(AMQP)/15672(management plugin)
+4. `--enable_tls`为可选选项，创建链时加上此选项，会在network.toml配置文件中增加`enable = true`和每个peer中`common_name = ${chain_name}.cita`的配置项，否则network.toml中不会生成前面两个配置项。
 
 ### 操作示例
 
 以下是最基础起链命令，该命令生成一条包含四个节点的新链，端口默认 4000 , 4001 , 4002 , 4003， 默认超级管理员，经济模型为 `Quota`, 所有权限控制关闭。
 
 ```shell
-$ ./env.sh ./scripts/create_cita_config.py create --nodes "127.0.0.1:4000,127.0.0.1:4001,127.0.0.1:4002,127.0.0.1:4003"
+$ ./env.sh ./scripts/create_cita_config.py create --super_admin "0x4b5ae4567ad5d9fb92bc9afd6a657e6fa13a2523" --nodes "127.0.0.1:4000,127.0.0.1:4001,127.0.0.1:4002,127.0.0.1:4003"
 ```
 
 接下来演示来生成一条高级配置的链, 命令如下：
 
 ```shell
-$ ./env.sh ./scripts/create_cita_config.py create --nodes "127.0.0.1:4000,127.0.0.1:4001,127.0.0.1:4002,127.0.0.1:4003" --contract_arguments SysConfig.checkSendTxPermission=true SysConfig.checkPermission=true SysConfig.economicalModel=1 SysConfig.checkFeeBackPlatform=true  SysConfig.chainOwner=0x9a6bd7272edb238f13002911d8c93dd6bb646d15 SysConfig.super_admin=0xab159a4817542585c93f01cfce9cfe6cd4cbd26a
+$ ./env.sh ./scripts/create_cita_config.py create --super_admin "0x4b5ae4567ad5d9fb92bc9afd6a657e6fa13a2523 --nodes "127.0.0.1:4000,127.0.0.1:4001,127.0.0.1:4002,127.0.0.1:4003" --contract_arguments SysConfig.checkSendTxPermission=true SysConfig.checkPermission=true SysConfig.economicalModel=1 SysConfig.checkFeeBackPlatform=true SysConfig.chainOwner=0x9a6bd7272edb238f13002911d8c93dd6bb646d15
 ```
 
 上述命令，生成一条包含四个节点，端口默认 4000 , 4001 , 4002 , 4003， 超级管理员地址 `0xab159a4817542585c93f01cfce9cfe6cd4cbd26a`， 运营方地址
@@ -161,19 +164,21 @@ $ ./env.sh ./scripts/create_cita_config.py create --nodes "127.0.0.1:4000,127.0.
 ### 配置超级管理员帐户地址
 
 ```shell
-$ ./env.sh ./scripts/create_cita_config.py create --super_admin=0xab159a4817542585c93f01cfce9cfe6cd4cbd26a ...
+$ ./env.sh ./scripts/create_cita_config.py create --super_admin=0x4b5ae4567ad5d9fb92bc9afd6a657e6fa13a2523 ...
 ```
 
-上述命令行参数中的 `--super_admin` 参数，用于设置超级管理员账户地址，该账户拥有最高权限，用来管理整条链的运行状态。在使用的时候，为安全起见，用户**应该/必须**自行设置超级管理员地址。
+上述命令行参数中的 `--super_admin` 参数，用于设置超级管理员账户地址，该账户拥有最高权限，用来管理整条链的运行状态。用户**必须**设置超级管理员。
 
-对于测试场合，CITA 配置了一个默认管理员账户地址（及其对应的私钥，只针对 secp256k1_sha3 版本）:
+CITA 提供了 `create_key_addr` 命令工具，可以很方便的生成私钥和对应的地址，下面使用 secp256k1_sha3 版本为例：
 
-```json
-{
-  address: 0x4b5ae4567ad5d9fb92bc9afd6a657e6fa13a2523
-  private-key: 5f0258a4778057a8a7d97809bd209055b2fbafa654ce7d31ec7191066b9225e6
-}
+```shell
+$ ./env.sh bin/create_key_addr key addr
+$ cat key addr
+0x5f0258a4778057a8a7d97809bd209055b2fbafa654ce7d31ec7191066b9225e6
+0x4b5ae4567ad5d9fb92bc9afd6a657e6fa13a2523
 ```
+
+上述命令建立两个文件，key 和 addr 。key 文件内的是私钥，addr 文件内的是对应的地址。
 
 ### Append 配置
 

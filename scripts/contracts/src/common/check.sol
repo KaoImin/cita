@@ -9,10 +9,7 @@ import "./address.sol";
 /// @author ["Cryptape Technologies <contact@cryptape.com>"]
 contract Check is ReservedAddress {
 
-    IAuthorization auth = IAuthorization(authorizationAddr);
-    IAllGroups groups = IAllGroups(allGroupsAddr);
-
-    modifier checkPermission(address _permission) {
+    modifier hasPermission(address _permission) {
         require(checkPermissionWithGroup(msg.sender, _permission), "permission denied.");
         _;
     }
@@ -21,7 +18,9 @@ contract Check is ReservedAddress {
         private
         returns (bool)
     {
+        IAuthorization auth = IAuthorization(authorizationAddr);
         if (!auth.checkPermission(msg.sender, _permission)) {
+            IAllGroups groups = IAllGroups(allGroupsAddr);
             address[] memory allGroups = groups.queryGroups();
             IGroup group;
             for (uint i; i < allGroups.length; i++) {

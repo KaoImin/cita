@@ -21,22 +21,19 @@ use bloomchain::group::{
 };
 use bloomchain::{Bloom, Config as BloomChainConfig, Number as BloomChainNumber};
 pub use byteorder::{BigEndian, ByteOrder};
-use cache_manager::CacheManager;
 use db;
 use db::*;
 
 use filters::{PollFilter, PollManager};
 use header::*;
-pub use libchain::block::*;
 use libchain::cache::CacheSize;
-use libchain::extras::*;
 use libchain::status::Status;
-pub use libchain::transaction::*;
-
 use libproto::blockchain::{
     AccountGasLimit as ProtoAccountGasLimit, Proof as ProtoProof, ProofType,
     RichStatus as ProtoRichStatus, StateSignal,
 };
+pub use types::block::*;
+use types::extras::*;
 
 use cita_types::traits::LowerHex;
 use cita_types::{Address, H256, U256};
@@ -53,6 +50,7 @@ use std::convert::{Into, TryInto};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use types::cache_manager::CacheManager;
 use types::filter::Filter;
 use types::ids::{BlockId, TransactionId};
 use types::log_entry::{LocalizedLogEntry, LogEntry};
@@ -70,8 +68,8 @@ const LOG_BLOOMS_ELEMENTS_PER_INDEX: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct RelayInfo {
-    pub from_chain_id: u32,
-    pub to_chain_id: u32,
+    pub from_chain_id: U256,
+    pub to_chain_id: U256,
     pub dest_contract: Address,
     pub dest_hasher: [u8; 4],
     pub cross_chain_nonce: u64,
@@ -94,7 +92,8 @@ impl TxProof {
 
     pub fn verify(&self, authorities: &[Address]) -> bool {
         // Calculate transaction hash, and it should be same as the transaction hash in receipt.
-        if self.receipt.transaction_hash == self.tx.calc_transaction_hash() {
+        let tx_hash = self.tx.calc_transaction_hash();
+        if self.receipt.transaction_hash == tx_hash {
         } else {
             warn!("txproof verify transaction_hash failed");
             return false;
@@ -147,8 +146,8 @@ impl TxProof {
             None
         } else {
             let mut iter = data.chunks(32);
-            let from_chain_id = U256::from(iter.next().unwrap()).low_u32();
-            let to_chain_id = U256::from(iter.next().unwrap()).low_u32();
+            let from_chain_id = U256::from(iter.next().unwrap());
+            let to_chain_id = U256::from(iter.next().unwrap());
             let dest_contract = Address::from(H256::from(iter.next().unwrap()));
             let dest_hasher = iter.next().unwrap()[..4]
                 .into_iter()
@@ -177,7 +176,7 @@ impl TxProof {
         my_contrac_addr: Address,
         my_hasher: [u8; 4],
         my_cross_chain_nonce: u64,
-        my_chain_id: u32,
+        my_chain_id: U256,
         authorities: &[Address],
     ) -> Option<(Address, Vec<u8>)> {
         if self.verify(authorities) {
@@ -201,7 +200,7 @@ impl TxProof {
                         && dest_hasher == my_hasher
                         && cross_chain_nonce == my_cross_chain_nonce
                     {
-                        // sendToSideChain(uint32 toChainId, address destContract, bytes txData)
+                        // sendToSideChain(uint256 toChainId, address destContract, bytes txData)
                         // skip func hasher, uint32, address, bytes position and length
                         let (_, origin_tx_data) = self.tx.data.split_at(4 + 32 * 4);
                         Some((*self.tx.sender(), origin_tx_data.to_owned()))
@@ -299,6 +298,7 @@ pub struct Chain {
     pub blocks_blooms: RwLock<HashMap<LogGroupPosition, LogBloomGroup>>,
     pub block_receipts: RwLock<HashMap<H256, BlockReceipts>>,
     pub nodes: RwLock<Vec<Address>>,
+    pub validators: RwLock<Vec<Address>>,
     pub block_interval: RwLock<u64>,
 
     pub block_quota_limit: AtomicUsize,
@@ -400,6 +400,7 @@ impl Chain {
             state_db: RwLock::new(state_db),
             polls_filter: Arc::new(Mutex::new(PollManager::default())),
             nodes: RwLock::new(Vec::new()),
+            validators: RwLock::new(Vec::new()),
             // need to be cautious here
             // because it's not read from the config file
             block_interval: RwLock::new(3000),
@@ -466,6 +467,11 @@ impl Chain {
             .into_iter()
             .map(|vecaddr| Address::from_slice(&vecaddr[..]))
             .collect();
+        let validators = conf.get_validators();
+        let validators: Vec<Address> = validators
+            .into_iter()
+            .map(|vecaddr| Address::from_slice(&vecaddr[..]))
+            .collect();
         let block_interval = conf.get_block_interval();
         let version = conf.get_version();
         debug!(
@@ -478,7 +484,8 @@ impl Chain {
         self.block_quota_limit
             .store(conf.get_block_quota_limit() as usize, Ordering::SeqCst);
         *self.account_quota_limit.write() = conf.get_account_quota_limit().clone();
-        *self.nodes.write() = nodes.clone();
+        *self.nodes.write() = nodes;
+        *self.validators.write() = validators;
         *self.block_interval.write() = block_interval;
         *self.admin_address.write() = if conf.get_admin_address().is_empty() {
             None
@@ -660,6 +667,11 @@ impl Chain {
 
         // Duplicated block
         if number <= self.get_current_height() {
+            let tx_hashes = self
+                .block_body_by_height(self.get_current_height())
+                .unwrap()
+                .transaction_hashes();
+            self.delivery_block_tx_hashes(self.get_current_height(), &tx_hashes, &ctx_pub);
             self.broadcast_current_status(&ctx_pub);
             return;
         }
@@ -1271,12 +1283,14 @@ impl Chain {
         let current_hash = header.hash();
         let current_height = header.number();
         let nodes: Vec<Address> = self.nodes.read().clone();
+        let validators: Vec<Address> = self.validators.read().clone();
         let block_interval = self.block_interval.read();
 
         let mut rich_status = ProtoRichStatus::new();
         rich_status.set_hash(current_hash.0.to_vec());
         rich_status.set_height(current_height);
         rich_status.set_nodes(nodes.into_iter().map(|address| address.to_vec()).collect());
+        rich_status.set_validators(validators.into_iter().map(|a| a.to_vec()).collect());
         rich_status.set_interval(*block_interval);
         rich_status.set_version(version_opt.unwrap());
 

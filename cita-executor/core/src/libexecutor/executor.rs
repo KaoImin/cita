@@ -38,9 +38,7 @@ use header::*;
 use libexecutor::blacklist::BlackList;
 pub use libexecutor::block::*;
 use libexecutor::call_request::CallRequest;
-use libexecutor::extras::*;
 use libexecutor::genesis::Genesis;
-pub use libexecutor::transaction::*;
 
 use libproto::blockchain::{Proof as ProtoProof, ProofType, RichStatus};
 use libproto::router::{MsgType, RoutingKey, SubModules};
@@ -59,6 +57,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Instant;
+use types::extras::*;
 use types::ids::BlockId;
 use types::receipt::ReceiptError;
 use types::transaction::{Action, SignedTransaction, Transaction};
@@ -170,6 +169,7 @@ impl Into<EconomicalModel> for RpcEconomicalModel {
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct GlobalSysConfig {
     pub nodes: Vec<Address>,
+    pub validators: Vec<Address>,
     pub block_gas_limit: usize,
     pub account_gas_limit: AccountGasLimit,
     pub delay_active_interval: usize,
@@ -193,6 +193,7 @@ impl GlobalSysConfig {
     fn new() -> GlobalSysConfig {
         GlobalSysConfig {
             nodes: Vec::new(),
+            validators: Vec::new(),
             block_gas_limit: 18_446_744_073_709_551_615,
             account_gas_limit: AccountGasLimit::new(),
             delay_active_interval: 1,
@@ -609,7 +610,7 @@ impl Executor {
             data: request.data.map_or_else(Vec::new, |d| d.to_vec()),
             block_limit: u64::max_value(),
             // TODO: Should Fixed?
-            chain_id: u32::min_value(),
+            chain_id: U256::default(),
             version: 0u32,
         }
         .fake_sign(from)
@@ -630,7 +631,7 @@ impl Executor {
             difficulty: U256::default(),
             last_hashes,
             gas_used: *header.quota_used(),
-            gas_limit: *header.gas_limit(),
+            gas_limit: *header.quota_limit(),
             account_gas_limit: u64::max_value().into(),
         };
         // that's just a copy of the state.
@@ -673,12 +674,18 @@ impl Executor {
             .into_iter()
             .map(|address| address.to_vec())
             .collect();
+        let validators = conf
+            .validators
+            .into_iter()
+            .map(|address| address.to_vec())
+            .collect();
         send_config.set_block_quota_limit(conf.block_gas_limit as u64);
         send_config.set_account_quota_limit(conf.account_gas_limit.into());
         send_config.set_check_quota(conf.check_quota);
 
         trace!("node_list : {:?}", node_list);
         send_config.set_nodes(node_list);
+        send_config.set_validators(validators);
         send_config.set_block_interval(conf.block_interval);
         send_config.set_version(conf.chain_version);
 
@@ -836,6 +843,11 @@ impl Executor {
         conf.nodes = self
             .node_manager()
             .shuffled_stake_nodes(block_id)
+            .unwrap_or_else(NodeManager::default_shuffled_stake_nodes);
+
+        conf.validators = self
+            .node_manager()
+            .nodes(block_id)
             .unwrap_or_else(NodeManager::default_shuffled_stake_nodes);
 
         let quota_manager = QuotaManager::new(self);
@@ -1231,7 +1243,7 @@ mod tests {
 
     use super::*;
     use cita_types::Address;
-    use core::libchain::block::Block as ChainBlock;
+    use core::libchain::Block as ChainBlock;
     use core::receipt::ReceiptError;
     use libproto::router::{MsgType, RoutingKey, SubModules};
     use libproto::Message;

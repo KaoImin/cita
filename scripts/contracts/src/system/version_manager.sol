@@ -3,6 +3,7 @@ pragma solidity ^0.4.24;
 import "../common/admin.sol";
 import "../common/address.sol";
 import "../interfaces/version_manager.sol";
+import "../interfaces/sys_config.sol";
 
 contract VersionManager is IVersionManager, ReservedAddress {
     uint32 public version;
@@ -26,6 +27,13 @@ contract VersionManager is IVersionManager, ReservedAddress {
         public
         onlyAdmin
     {
+        if (_version != version + 1) {
+            revert("New version must be greater by 1 than the older one.");
+        }
+        if (version == 0 && _version == 1) {
+            ISysConfig config = ISysConfig(sysConfigAddr);
+            config.updateToChainIdV1();
+        }
         version = _version;
     }
 
