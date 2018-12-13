@@ -1,5 +1,5 @@
 // CITA
-// Copyright 2016-2017 Cryptape Technologies LLC.
+// Copyright 2016-2018 Cryptape Technologies LLC.
 
 // This program is free software: you can redistribute it
 // and/or modify it under the terms of the GNU General Public
@@ -15,19 +15,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use block_txn::{BlockTxnMessage, BlockTxnReq};
 use cita_types::traits::LowerHex;
 use cita_types::{clean_0x, Address, H256, U256};
 use crypto::{pubkey_to_address, PubKey, Sign, Signature, SIGNATURE_BYTES_LEN};
 use dispatcher::Dispatcher;
 use error::ErrorCode;
+use history::HistoryHeights;
 use jsonrpc_types::rpctypes::TxResponse;
 use libproto::auth::{Miscellaneous, MiscellaneousReq};
 use libproto::blockchain::{AccountGasLimit, SignedTransaction};
 use libproto::router::{MsgType, RoutingKey, SubModules};
 use libproto::snapshot::{Cmd, Resp, SnapshotReq, SnapshotResp};
 use libproto::{
-    BlackList, BlockTxHashes, BlockTxHashesReq, Crypto, Message, Request, Response, Ret,
-    VerifyBlockReq, VerifyBlockResp, VerifyTxReq,
+    BlackList, BlockTxHashes, BlockTxHashesReq, BlockTxn, Crypto, GetBlockTxn, Message,
+    OperateType, Origin, Request, Response, Ret, UnverifiedTransaction, VerifyBlockReq,
+    VerifyBlockResp, VerifyTxReq,
 };
 use lru::LruCache;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -38,163 +41,16 @@ use std::convert::{Into, TryFrom, TryInto};
 use std::str::FromStr;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
-use util::instrument::{unix_now, AsMillis};
 use util::BLOCKLIMIT;
 
-#[derive(Debug)]
-struct HistoryHeights {
-    heights: HashSet<u64>,
-    max_height: u64,
-    min_height: u64,
-    is_init: bool,
-    last_timestamp: u64,
-}
-
-impl HistoryHeights {
-    pub fn new() -> Self {
-        HistoryHeights {
-            heights: HashSet::new(),
-            max_height: 0,
-            min_height: 0,
-            is_init: false,
-            //init value is 0 mean first time must not too frequent
-            last_timestamp: 0,
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.heights.clear();
-        self.max_height = 0;
-        self.min_height = 0;
-        self.is_init = false;
-        self.last_timestamp = 0;
-    }
-
-    pub fn update_height(&mut self, height: u64) {
-        // update 'min_height', 'max_height', 'heights'
-        if height < self.min_height {
-            trace!(
-                "height is small than min_height: {} < {}",
-                height,
-                self.min_height,
-            );
-            return;
-        } else if height > self.max_height {
-            self.max_height = height;
-
-            let old_min_height = self.min_height;
-            self.min_height = if height > BLOCKLIMIT {
-                height - BLOCKLIMIT + 1
-            } else {
-                0
-            };
-
-            self.heights.insert(height);
-            for i in old_min_height..self.min_height {
-                self.heights.remove(&i);
-            }
-        } else {
-            self.heights.insert(height);
-        }
-
-        // update 'is_init'
-        let mut is_init = true;
-        for i in self.min_height..self.max_height {
-            if !self.heights.contains(&i) {
-                is_init = false;
-                break;
-            }
-        }
-        self.is_init = is_init;
-    }
-
-    pub fn next_height(&self) -> u64 {
-        self.max_height + 1
-    }
-
-    pub fn is_init(&self) -> bool {
-        self.is_init
-    }
-
-    pub fn max_height(&self) -> u64 {
-        self.max_height
-    }
-
-    pub fn min_height(&self) -> u64 {
-        self.min_height
-    }
-
-    // at least wait 3s from latest update
-    pub fn is_too_frequent(&self) -> bool {
-        AsMillis::as_millis(&unix_now()) < self.last_timestamp + 3000
-    }
-
-    pub fn update_time_stamp(&mut self) {
-        // update time_stamp
-        self.last_timestamp = AsMillis::as_millis(&unix_now());
-    }
-}
-
-#[cfg(test)]
-mod history_heights_tests {
-    use super::HistoryHeights;
-
-    #[test]
-    fn basic() {
-        let mut h = HistoryHeights::new();
-        assert_eq!(h.is_init(), false);
-        assert_eq!(h.next_height(), 1);
-
-        h.update_height(60);
-        assert_eq!(h.is_init(), false);
-        assert_eq!(h.next_height(), 61);
-
-        for i in 0..60 {
-            h.update_height(i);
-        }
-        assert_eq!(h.is_init(), true);
-        assert_eq!(h.next_height(), 61);
-
-        h.update_height(70);
-        assert_eq!(h.is_init(), false);
-        assert_eq!(h.next_height(), 71);
-
-        for i in 0..70 {
-            h.update_height(i);
-        }
-        assert_eq!(h.is_init(), true);
-        assert_eq!(h.next_height(), 71);
-
-        h.update_height(99);
-        assert_eq!(h.is_init(), false);
-        assert_eq!(h.next_height(), 100);
-
-        for i in 0..99 {
-            h.update_height(i);
-        }
-        assert_eq!(h.is_init(), true);
-        assert_eq!(h.next_height(), 100);
-
-        h.update_height(100);
-        assert_eq!(h.is_init(), true);
-        assert_eq!(h.next_height(), 101);
-
-        h.update_height(101);
-        assert_eq!(h.is_init(), true);
-        assert_eq!(h.next_height(), 102);
-    }
-}
-
-// verify chain id and signature
-pub fn verify_tx_sig(req: &VerifyTxReq) -> Result<Vec<u8>, ()> {
-    let hash = H256::from(req.get_hash());
-    let sig_bytes = req.get_signature();
+// verify signature
+pub fn verify_tx_sig(crypto: Crypto, hash: &H256, sig_bytes: &[u8]) -> Result<Vec<u8>, ()> {
     if sig_bytes.len() != SIGNATURE_BYTES_LEN {
         return Err(());
     }
 
     let sig = Signature::from(sig_bytes);
-    match req.get_crypto() {
+    match crypto {
         Crypto::SECP => sig
             .recover(&hash)
             .map(|pubkey| pubkey.to_vec())
@@ -236,6 +92,7 @@ pub struct MsgHandler {
     black_list_cache: HashMap<Address, i8>,
     is_need_proposal_new_block: bool,
     config_info: SysConfigInfo,
+    block_txn_req: Option<(BlockTxnReq)>,
 }
 
 impl MsgHandler {
@@ -273,6 +130,7 @@ impl MsgHandler {
                 admin_address: None,
                 version: None,
             },
+            block_txn_req: None,
         }
     }
 
@@ -410,17 +268,6 @@ impl MsgHandler {
             request_id
         );
 
-        // for block verify, req must include signer
-        for req in blk_req.get_reqs() {
-            let req_signer = req.get_signer();
-            if req_signer.is_empty() {
-                let tx_hash = H256::from_slice(req.get_tx_hash());
-                self.publish_block_verification_result(request_id, Ret::BadSig);
-                self.save_ret_to_cache(tx_hash, None);
-                return;
-            }
-        }
-
         let mut reqs_no_cache = Vec::new();
         for req in blk_req.get_reqs() {
             let tx_hash = H256::from_slice(req.get_tx_hash());
@@ -453,7 +300,11 @@ impl MsgHandler {
             .into_par_iter()
             .map(|req| {
                 let tx_hash = H256::from_slice(req.get_tx_hash());
-                let result = verify_tx_sig(&req);
+                let result = verify_tx_sig(
+                    req.get_crypto(),
+                    &H256::from(req.get_hash()),
+                    &req.get_signature(),
+                );
                 match result {
                     Ok(pubkey) => {
                         let req_signer = req.get_signer();
@@ -801,6 +652,20 @@ impl MsgHandler {
                         let snapshot_req = msg.take_snapshot_req().unwrap();
                         self.deal_snapshot(&snapshot_req);
                     }
+                    routing_key!(Net >> GetBlockTxn) => {
+                        let mut get_block_txn = msg.take_get_block_txn().unwrap();
+                        let origin = msg.get_origin();
+                        self.deal_get_block_txn(&mut get_block_txn, origin);
+                    }
+                    routing_key!(Net >> BlockTxn) => {
+                        let block_txn = msg.take_block_txn().unwrap();
+                        let origin = msg.get_origin();
+                        let mut block_txn_message = BlockTxnMessage { origin, block_txn };
+                        self.deal_block_txn(block_txn_message);
+                        // TODO: notify network to add the origin to blacklist if BadTxSignature
+                        // TODO: Verify block quota limit
+                        // TODO: send block transactions to consensus
+                    }
                     _ => {
                         error!("receive unexpected message key {}", key);
                     }
@@ -967,7 +832,11 @@ impl MsgHandler {
             let results: Vec<(H256, Option<Vec<u8>>)> = requests_no_cached
                 .into_par_iter()
                 .map(|(tx_hash, ref req)| {
-                    let result = verify_tx_sig(req);
+                    let result = verify_tx_sig(
+                        req.get_crypto(),
+                        &H256::from(req.get_hash()),
+                        &req.get_signature(),
+                    );
                     match result {
                         Ok(pubkey) => (tx_hash, Some(pubkey)),
                         Err(_) => (tx_hash, None),
@@ -1074,7 +943,11 @@ impl MsgHandler {
                 }
                 req.set_signer(option_pubkey.unwrap());
             } else {
-                let result = verify_tx_sig(&req);
+                let result = verify_tx_sig(
+                    req.get_crypto(),
+                    &H256::from(req.get_hash()),
+                    &req.get_signature(),
+                );
                 self.save_ret_to_cache(tx_hash, result.clone().ok());
                 match result {
                     Ok(pubkey) => {
@@ -1207,6 +1080,60 @@ impl MsgHandler {
                 None
             };
             info!("Get chain_id({:?}) from executor", self.chain_id);
+        }
+    }
+
+    fn deal_get_block_txn(&mut self, get_block_txn: &mut GetBlockTxn, origin: Origin) {
+        let short_ids: Vec<H256> = get_block_txn
+            .get_short_ids()
+            .into_iter()
+            .map(|id| H256::from(U256::from(id.as_slice())))
+            .collect();
+        let txs: Vec<UnverifiedTransaction> = self
+            .dispatcher
+            .get_txs(&short_ids)
+            .into_iter()
+            .map(|mut tx| tx.take_transaction_with_sig())
+            .collect();
+
+        let mut block_txn = BlockTxn::new();
+        block_txn.set_block_hash(get_block_txn.take_block_hash());
+        block_txn.set_transactions(txs.into());
+        let msg = Message::init(OperateType::Single, origin, block_txn.into());
+
+        self.tx_pub
+            .send((
+                routing_key!(Auth >> BlockTxn).into(),
+                (&msg).try_into().unwrap(),
+            ))
+            .unwrap();
+    }
+
+    fn deal_block_txn(&mut self, mut block_txn: BlockTxnMessage) {
+        // TODO: Need NLL to avoid clone
+        if let Some(ref block_txn_req) = self.block_txn_req.clone() {
+            let result = block_txn.validate(block_txn_req);
+            match result {
+                Ok(pubkey_and_hashes) => {
+                    let signed_txn: Vec<SignedTransaction> = pubkey_and_hashes
+                        .into_iter()
+                        .zip(block_txn.take_transactions().into_iter())
+                        .map(|((pubkey, hash), tx)| {
+                            self.save_ret_to_cache(hash, Some(pubkey.clone()));
+
+                            let mut signed_tx = SignedTransaction::new();
+                            signed_tx.set_transaction_with_sig(tx);
+                            signed_tx.set_signer(pubkey);
+                            signed_tx.set_tx_hash(hash.to_vec());
+                            signed_tx
+                        })
+                        .collect();
+                    self.dispatcher.add_txs_to_pool(signed_txn);
+                }
+                Err(error) => {
+                    info!("Validate BlockTxn error: {}", error);
+                }
+            }
         }
     }
 }

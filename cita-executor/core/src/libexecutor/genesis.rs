@@ -74,7 +74,7 @@ impl Genesis {
             set_param_path(resource_path.join("PARAMS").to_str().unwrap());
         }
         if resource_path.exists() {
-            let file_list_path = resource_path.join("file_list");
+            let file_list_path = resource_path.join("files.list");
             if file_list_path.exists() {
                 let file_list = File::open(file_list_path).unwrap();
                 let mut buf_reader = BufReader::new(file_list);
@@ -153,12 +153,6 @@ impl Genesis {
             for (key, values) in &contract.storage {
                 let result =
                     state.storage_at(&address, &H256::from_unaligned(key.as_ref()).unwrap());
-                trace!(
-                    "address = {:?}, key = {:?}, result = {:?}",
-                    address,
-                    key,
-                    result
-                );
                 assert_eq!(
                     H256::from_unaligned(values.as_ref()).unwrap(),
                     result.expect("storage error")
@@ -170,13 +164,14 @@ impl Genesis {
         let root = *state.root();
         trace!("root {:?}", root);
         self.block.set_state_root(root);
+        self.block.rehash();
 
         self.save(state, state_db.journal_db().backing())
     }
 
     fn save(&mut self, state: State<StateDB>, db: &Arc<KeyValueDB>) -> Result<(), String> {
         let mut batch = db.transaction();
-        let hash = self.block.hash();
+        let hash = self.block.hash().unwrap();
         let height = self.block.number();
         //初始化的时候需要获取头部信息
         batch.write(db::COL_HEADERS, &hash, self.block.header());
@@ -186,7 +181,6 @@ impl Genesis {
         state_db
             .journal_under(&mut batch, height, &hash)
             .expect("DB commit failed");
-        state_db.sync_cache(&[], &[], true);
         db.write(batch)
     }
 }

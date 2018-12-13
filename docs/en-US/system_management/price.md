@@ -1,48 +1,56 @@
-# 配额价格管理
+# Quota Price Management
 
-## 简述
+## Overview
 
-和以太坊消耗 gas 类似，在 CITA 的 `Charge` 经济模型中发送交易，部署合约等也需要花费一定的手续费，具体的计算方法是: `手续费 = quotaUsed * quotaPrice` 。
-为了更好的满足运营方的需求，我们提供了设置 `quotaPrice` 的接口，拥有权限的管理员可以通过发送交易来设置 `quotaPrice`。
+When you choose `Charge` economic model in CITA, similar to gas in Ethereum, it is required to spend a certain amount of quota when sending a transaction or deploying a contract, etc.
+The specific calculation method is: `Transaction fee = quotaUsed * quotaPrice`.
+In order to better meet the needs of the operators, we provide an interface to set `quotaPrice`, and only administrator can set `quotaPrice` by sending a transaction.
 
-## 操作示例
+## Operation Example
 
-> 接下来的测试，用 [cita-cli](https://github.com/cryptape/cita-cli) 命令行模式进行演示。
+The default `quotaPrice` is 1000000, and we will demonstrates how to modify the quotaPrice by administrator using [cita-cli] (https://github.com/cryptape/cita-cli).
 
-默认的`quotaPrice` 默认为 1， 接下来演示管理员如何修改 quotaPrice。
+> The default `quotaPrice` before version 0.20 is 1
 
-首先查询当前的 `quota_price`：
+First, query the current `quotaPrice`:
+
 ```bash
 $ cita-cli scm PriceManager getQuotaPrice
 ```
 
-输出：
+Get the output：
 ```json
 {
   "id": 1,
   "jsonrpc": "2.0",
-  "result": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  "result": "0x00000000000000000000000000000000000000000000000000000000000f4240"
 }
 
 ```
 
-修改 `quota_price`， 我们把 `quota_price` 由 1  改为 2:
+In here, we get the `quotaPrice`, which is default in hexadecimal.
+
+Next, we change `quotaPrice` from 1000000 to 2000000:
+
 ```bash
 $ cita-cli scm PriceManager setQuotaPrice \
               --admin-private 0x5f0258a4778057a8a7d97809bd209055b2fbafa654ce7d31ec7191066b9225e6 \
-              --price 0x0000000000000000000000000000000000000000000000000000000000000002
+              --price 0x00000000000000000000000000000000000000000000000000000000001e8480
 ```
 
-再次查询， 发现 `quota_price` 已更新：
+Query again:
+
 ```bash
 $ cita-cli scm PriceManager getQuotaPrice
 ```
 
-输出：
+Get the Output：
 ```json
 {
   "id": 1,
   "jsonrpc": "2.0",
-  "result": "0x0000000000000000000000000000000000000000000000000000000000000002"
+  "result": "0x00000000000000000000000000000000000000000000000000000000001e8480"
 }
 ```
+
+In here, we can see that quotaPrice changed sucessfully.

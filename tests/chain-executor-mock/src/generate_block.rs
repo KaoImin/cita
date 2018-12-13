@@ -104,7 +104,7 @@ impl BuildBlock {
         block.mut_header().set_prevhash(pre_hash.0.to_vec());
         block.mut_body().set_transactions(txs.into());
         let mut proof = BftProof::default();
-        proof.height = (height - 1) as usize;
+        proof.height = height as usize;
         proof.round = 0;
         proof.proposal = H256::default();
         let mut commits = HashMap::new();
@@ -122,7 +122,9 @@ impl BuildBlock {
         let signature = Signature::sign(privkey, &msg.crypt_hash()).unwrap();
         commits.insert((*sender).into(), signature);
         proof.commits = commits;
-        block.mut_header().set_proof(proof.clone().into());
+        let mut previous_proof = proof.clone();
+        previous_proof.height = height as usize - 1;
+        block.mut_header().set_proof(previous_proof.into());
         let transactions_root = block.get_body().transactions_root();
         block
             .mut_header()

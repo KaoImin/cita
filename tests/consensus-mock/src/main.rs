@@ -61,7 +61,7 @@ pub enum Step {
 
 fn build_proof(height: u64, sender: Address, privkey: &PrivKey) -> BftProof {
     let mut proof = BftProof::default();
-    proof.height = (height - 1) as usize;
+    proof.height = height as usize;
     proof.round = 0;
     proof.proposal = H256::default();
 
@@ -98,10 +98,12 @@ fn build_block(
     let transaction_root = body.transactions_root().to_vec();
     let mut proof_blk = BlockWithProof::new();
 
+    let mut previous_proof = proof.clone();
+    previous_proof.height = height as usize - 1;
     block.mut_header().set_timestamp(time_stamp);
     block.mut_header().set_height(height);
     block.mut_header().set_prevhash(pre_block_hash.0.to_vec());
-    block.mut_header().set_proof(proof.clone().into());
+    block.mut_header().set_proof(previous_proof.into());
     block.mut_header().set_transactions_root(transaction_root);
     block.set_body(body.clone());
 
@@ -137,7 +139,7 @@ fn send_block(
 }
 
 fn main() {
-    logger::init();
+    logger::init_config("consensus_mock");
     info!("CITA: Consensus Mock");
 
     // set up the clap to receive info from CLI

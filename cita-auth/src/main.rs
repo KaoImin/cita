@@ -34,6 +34,8 @@
 //!     | auth  | Net       | Request           |
 //!     | auth  | Snapshot  | SnapshotReq       |
 //!     | auth  | Executor  | Miscellaneous     |
+//!     | auth  | Net       | GetBlockTxn       |
+//!     | auth  | Net       | BlockTxn          |
 //!
 //! 2. Publish channel
 //!
@@ -46,6 +48,8 @@
 //!     | auth  | Auth      | Consensus | BlockTxs          |
 //!     | auth  | Auth      | Snapshot  | SnapshotResp      |
 //!     | auth  | Auth      | Executor  | MiscellaneousReq  |
+//!     | auth  | Auth      | Net       | GetBlockTxn       |
+//!     | auth  | Auth      | Net       | BlockTxn          |
 //!
 //! ### Key behavior
 //!
@@ -95,9 +99,12 @@ extern crate util;
 extern crate uuid;
 
 pub mod batch_forward;
+pub mod block_txn;
+pub mod block_verify;
 pub mod config;
 pub mod dispatcher;
 pub mod handler;
+pub mod history;
 pub mod txwal;
 use batch_forward::BatchForward;
 use clap::App;
@@ -176,6 +183,8 @@ fn main() {
             Net >> Request,
             Snapshot >> SnapshotReq,
             Executor >> Miscellaneous,
+            Net >> GetBlockTxn,
+            Net >> BlockTxn,
         ]),
         tx_sub,
         rx_pub,

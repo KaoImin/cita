@@ -1,5 +1,5 @@
 // CITA
-// Copyright 2016-2017 Cryptape Technologies LLC.
+// Copyright 2016-2018 Cryptape Technologies LLC.
 
 // This program is free software: you can redistribute it
 // and/or modify it under the terms of the GNU General Public
@@ -18,10 +18,10 @@
 #![feature(try_from)]
 #![cfg_attr(test, feature(test))]
 #![feature(tool_lints)]
+#![feature(mpsc_select)]
 
 extern crate bincode;
 extern crate byteorder;
-#[macro_use]
 extern crate libproto;
 #[macro_use]
 extern crate logger;
@@ -32,8 +32,10 @@ extern crate rlp;
 extern crate serde_derive;
 #[cfg_attr(test, macro_use)]
 extern crate serde_json;
-#[macro_use]
 extern crate util;
+
+#[macro_use]
+extern crate crossbeam_channel;
 
 #[macro_use]
 extern crate rlp_derive;
@@ -72,6 +74,8 @@ extern crate num;
 extern crate rand;
 
 pub mod account_db;
+#[cfg(test)]
+pub mod benches;
 pub mod builtin;
 pub mod executed;
 pub mod executive;
@@ -88,9 +92,9 @@ pub mod engines;
 pub mod error;
 pub mod substate;
 
+pub mod authentication;
 pub mod contracts;
 pub mod libexecutor;
-pub mod snapshot;
 
 mod spec;
 

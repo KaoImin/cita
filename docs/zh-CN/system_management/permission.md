@@ -61,10 +61,10 @@ CITA通过智能合约的方式来对权限进行管理。
 $ ./env.sh ./scripts/create_cita_config.py create \
     --super_admin "0x4b5ae4567ad5d9fb92bc9afd6a657e6fa13a2523" \
     --nodes "127.0.0.1:4000,127.0.0.1:4001,127.0.0.1:4002,127.0.0.1:4003" \
-	--contract_arguments SysConfig.checkPermission=true SysConfig.checkSendTxPermission=true SysConfig.checkCreateContractPermission=true
+	--contract_arguments SysConfig.checkCallPermission=true SysConfig.checkSendTxPermission=true SysConfig.checkCreateContractPermission=true
 ```
 
-其中 `checkPermission`, `checkSendTxPermission`, `checkCreateContractPermission` 分别为合约调用、发送交易及创建合约的开关。
+其中 `checkCallPermission`, `checkSendTxPermission`, `checkCreateContractPermission` 分别为合约调用、发送交易及创建合约的开关。
 
 启动链接下来的步骤见[快速搭链](./chain/getting_started)部分。接下来的测试，用 [cita-cli](https://github.com/cryptape/cita-cli) 命令行模式（与交互式模式的命令是一致的）进行演示。
 
@@ -86,7 +86,7 @@ $ cita-cli key create
 
 ### 部署合约
 
-使用[测试合约](https://github.com/cryptape/cita/blob/develop/scripts/contracts/tests/contracts/test_example.sol)
+使用[测试合约](https://github.com/cryptape/cita/blob/develop/scripts/contracts/tests/contracts/SimpleStorage.sol)
 
 #### 获得合约的相关信息
 
